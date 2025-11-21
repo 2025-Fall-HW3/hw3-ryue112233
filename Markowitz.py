@@ -63,6 +63,13 @@ class EqualWeightPortfolio:
         TODO: Complete Task 1 Below
         """
 
+        num_assets = len(assets)
+        equal_weight = 1.0 / num_assets
+
+        self.portfolio_weights.loc[:, assets] = equal_weight
+
+        self.portfolio_weights[self.exclude] = 0.0
+
         """
         TODO: Complete Task 1 Above
         """
@@ -85,7 +92,7 @@ class EqualWeightPortfolio:
 
     def get_results(self):
         # Ensure portfolio returns are calculated
-        if not hasattr(self, "portfolio_returns"):
+        if not hasattr(self, "portfolio_weights"):
             self.calculate_portfolio_returns()
 
         return self.portfolio_weights, self.portfolio_returns
@@ -114,7 +121,26 @@ class RiskParityPortfolio:
         TODO: Complete Task 2 Below
         """
 
+        for i in range(self.lookback + 1, len(df)):
 
+            window = df_returns[assets].iloc[i - self.lookback : i]
+
+            vol = window.std()
+
+            inv_vol = 1.0 / vol.replace(0, np.nan)
+
+            sum_inv_vol = inv_vol.sum()
+
+            if sum_inv_vol > 0:
+                weights = inv_vol / sum_inv_vol
+            else:
+                weights = 0.0
+            
+            weights = weights.fillna(0)
+
+            self.portfolio_weights.loc[df.index[i], assets] = weights
+
+        self.portfolio_weights[self.exclude] = 0.0
 
         """
         TODO: Complete Task 2 Above
@@ -139,7 +165,7 @@ class RiskParityPortfolio:
 
     def get_results(self):
         # Ensure portfolio returns are calculated
-        if not hasattr(self, "portfolio_returns"):
+        if not hasattr(self, "portfolio_weights"):
             self.calculate_portfolio_returns()
 
         return self.portfolio_weights, self.portfolio_returns
@@ -167,12 +193,17 @@ class MeanVariancePortfolio:
 
         for i in range(self.lookback + 1, len(df)):
             R_n = df_returns.copy()[assets].iloc[i - self.lookback : i]
-            self.portfolio_weights.loc[df.index[i], assets] = self.mv_opt(
+            
+            w_opt = self.mv_opt(
                 R_n, self.gamma
             )
+            
+            self.portfolio_weights.loc[df.index[i], assets] = w_opt
 
         self.portfolio_weights.ffill(inplace=True)
         self.portfolio_weights.fillna(0, inplace=True)
+        self.portfolio_weights[self.exclude] = 0.0
+
 
     def mv_opt(self, R_n, gamma):
         Sigma = R_n.cov().values
@@ -187,36 +218,39 @@ class MeanVariancePortfolio:
                 """
                 TODO: Complete Task 3 Below
                 """
+                w = model.addMVar(n, name="w", lb=0, ub=1)
 
-                # Sample Code: Initialize Decision w and the Objective
-                # NOTE: You can modify the following code
-                w = model.addMVar(n, name="w", ub=1)
-                model.setObjective(w.sum(), gp.GRB.MAXIMIZE)
+                return_term = mu @ w
+                risk_term = w @ Sigma @ w
+                
+                model.setObjective(
+                    return_term - (gamma / 2) * risk_term, 
+                    gp.GRB.MAXIMIZE
+                )
 
+                model.addConstr(w.sum() == 1, "sum_to_one")
+                
                 """
                 TODO: Complete Task 3 Above
                 """
                 model.optimize()
 
-                # Check if the status is INF_OR_UNBD (code 4)
                 if model.status == gp.GRB.INF_OR_UNBD:
                     print(
                         "Model status is INF_OR_UNBD. Reoptimizing with DualReductions set to 0."
                     )
                 elif model.status == gp.GRB.INFEASIBLE:
-                    # Handle infeasible model
-                    print("Model is infeasible.")
+                    print("Model is infeasible. Returning Equal Weight.")
+                    return np.ones(n) / n
                 elif model.status == gp.GRB.INF_OR_UNBD:
-                    # Handle infeasible or unbounded model
-                    print("Model is infeasible or unbounded.")
+                    print("Model is infeasible or unbounded. Returning Equal Weight.")
+                    return np.ones(n) / n
 
                 if model.status == gp.GRB.OPTIMAL or model.status == gp.GRB.SUBOPTIMAL:
-                    # Extract the solution
-                    solution = []
-                    for i in range(n):
-                        var = model.getVarByName(f"w[{i}]")
-                        # print(f"w {i} = {var.X}")
-                        solution.append(var.X)
+                    solution = w.X.tolist()
+                else:
+                    print(f"Optimization failed with status {model.status}. Returning Equal Weight.")
+                    solution = np.ones(n) / n
 
         return solution
 
@@ -236,7 +270,7 @@ class MeanVariancePortfolio:
 
     def get_results(self):
         # Ensure portfolio returns are calculated
-        if not hasattr(self, "portfolio_returns"):
+        if not hasattr(self, "portfolio_weights"):
             self.calculate_portfolio_returns()
 
         return self.portfolio_weights, self.portfolio_returns
